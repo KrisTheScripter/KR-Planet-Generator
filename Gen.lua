@@ -1,36 +1,9 @@
---Version 1.0
+--Version 1.1.0
 --Made by Kris (xXxKrisstalDragonxXx)
---Pars table example:
 --[[
-
-{
-	Noise = {
-		Amplitude = 3,
-		Persistence = 0.5,
-		Octaves = 20,
-		MountainsMod = 1.5,
-		MountainsFrom = 0.45,
-		NoiseDivider = 7,
-		Seed = 0.148
-	},
-	Sea = {
-		Radius = 5080,
-		Color = Color3.fromRGB(52, 106, 255),
-		Transparency = 0.65,
-		Material = Enum.Material.SmoothPlastic
-	},
-	Gen = {
-		Resolution = 5,
-		Radius = 5000,
-		Weld = false,
-		IsSmoothSubdivide = true,
-		IsAnchored = true,
-		Coroutines = 100,
-		Position = Vector3.new(0, 0, 0)
-	},
-	PrintStatus = false
-}
-
+	See my API on github for more info
+	Now has autofill
+	More parameters for generation time provided
 ]]
 --Biomes table example:
 --[[
@@ -80,7 +53,9 @@ local IcosphereInformation = require(script.IcosphereInformation);
 local Draw3DTriangle = require(script.Draw3DTriangle);
 local Vertices = IcosphereInformation[2];
 local TriSet = IcosphereInformation[1];
+local BaseVertices = IcosphereInformation[6]
 local ThreeDNoise = require(script.PerlinNoise);
+local WeldingM = require(script.Weld)
 
 --Functions
 
@@ -124,12 +99,25 @@ local function fromNumber(tab, num)
 	end
 end
 
+local function autofill(v, auto)
+	if v == nil then return auto
+	else return v end
+end
+
+local function getns(pos:Vector3, rad:number, deform:Vector3)
+	local c = GetCentre()
+	local unit = (pos-c).Unit
+	--local def = unit*rad*deform
+	local diff = (pos - c).Magnitude * (unit / deform).Magnitude / rad-1
+	return diff*1000
+end
+
 --Module functions
 
-function GenerationDone(Planet,Biomes,LoadingSpeed,Pars)
+function GenerationDone(Planet:Model,Biomes,LoadingSpeed,Pars)
 	--Filling the biomes' parameters if not set
 	for i, v in pairs(Biomes) do
-		if not v.Min or not v.Max then --PLEASE CONSIDER USING YOUR OWN MIN AND MAX THIS THING IS SMTH
+		if not v.Min or not v.Max then --PLEASE CONSIDER TO SET MIN AND MAX THIS THING IS SMTH
 			v.Min = math.random(400, 550) / 1000
 			local biome
 			repeat
@@ -147,8 +135,8 @@ function GenerationDone(Planet,Biomes,LoadingSpeed,Pars)
 			v.Weight = math.random(1, countTable(Biomes))
 		end
 	end
-	local function randomize(num)--randomize color
-		num *= (math.random(97, 103) / 100)
+	local function randomize(num)--randomize the color
+		num *= (math.random(98, 102) / 100)
 		num = math.clamp(num, 0, 1)
 		return num
 	end
@@ -163,31 +151,48 @@ function GenerationDone(Planet,Biomes,LoadingSpeed,Pars)
 		end
 	end
 	--Painting
-	for i, Triangle in pairs(Planet:GetChildren()) do
-		local Noise = (Triangle.Position - GetCentre()).Magnitude / (1000 * (Pars.Gen.Radius / 500));
-		local material, weight, color = nil, 0, Color3.new(0, 0, 0)
-		for i2, v in pairs(Biomes) do
-			if Noise*1000 > v.Min*1000 and Noise*1000 < v.Max*1000 then
-				if v.Weight > weight then
-					--P. s. random weight, min and max here is smth, so fill them in your script manually
-					material = v.Material :: Enum.Material
-					weight = v.Weight
-					color = v.Color
+	local Triangles: {WedgePart} = Planet:GetChildren()
+	local completed = 0
+	local function pastpart(imin, imax)
+		for i=imin, imax do
+			local Triangle = Triangles[i]
+			local Noise = getns(Triangle.Position, Pars.Gen.Radius, Pars.Gen.Deform)-- / (500 * (Pars.Gen.Radius / 1000));
+			local material, weight, color = nil, 0, Color3.new(0, 0, 0)
+			for i2, v in pairs(Biomes) do
+				if Noise > v.Min and Noise < v.Max then
+					if v.Weight > weight then
+						material = v.Material :: Enum.Material
+						weight = v.Weight
+						color = v.Color
+					end
 				end
 			end
+			if not material then--a random biome. If your don't fill the min and max then random can't even assign it properly so we result in a random biome
+				local biome = rBiome()
+				color = Biomes[biome].Color
+				material = Biomes[biome].Material
+			end
+			Triangle.Color = Color3.new(randomize(color.R),randomize(color.G),randomize(color.B))
+			Triangle.Material = material
+			Triangle.Name = Noise
+			completed += 1
+			if i % (LoadingSpeed * 2) == 0 then task.wait() end
+		end;
+	end
+	local partcount: number = Pars.Gen.TerrainCoroutines
+	local part = math.ceil(#Triangles/partcount)
+	for i=1, partcount do
+		if i == partcount then
+			coroutine.wrap(pastpart)(part*(i-1) + 1, #Triangles)
+		else
+			coroutine.wrap(pastpart)(part*(i-1) + 1, part*i)
 		end
-		if not material then--a random biome. If your don't fill the min and max then random can't even assign it properly so we result in a random biome
-			local biome = rBiome()
-			color = Biomes[biome].Color
-			material = Biomes[biome].Material
-		end
-		Triangle.Color = Color3.new(randomize(color.R),randomize(color.G),randomize(color.B))
-		Triangle.Material = material
-		Triangle.Name = material.Name;
-		if i % (LoadingSpeed * 2) == 0 then task.wait()
-			if Pars.PrintStatus then print("Painting: "..i.."/"..#Planet:GetChildren()) end
-		end
-	end;
+	end
+	repeat
+		task.wait()
+		if Pars.PrintStatus then print("Painting: "..completed.."/"..#Triangles) end
+	until completed == #Triangles
+	task.wait()
 	--creating the core
 	local core = Instance.new("Part")
 	SetProperties(core, {
@@ -199,14 +204,17 @@ function GenerationDone(Planet,Biomes,LoadingSpeed,Pars)
 		Parent = Planet,
 		Color = Color3.fromRGB(255, 0, 0)
 	})
+	task.wait()
 	local coreMesh = game.ReplicatedStorage.Assets.BallMesh:Clone();
 	SetProperties(coreMesh, {
 		Scale = Vector3.new(1, 1, 1) * (Pars.Gen.Radius * 0.75);
 		Parent = core;
 	});
+	task.wait()
 	Planet.PrimaryPart = core
 	--creating the sea
 	if Pars.Sea.Radius > 0 then
+		task.wait()
 		local Water = Instance.new("Part");
 		SetProperties(Water, {
 			Color = Pars.Sea.Color;
@@ -220,11 +228,13 @@ function GenerationDone(Planet,Biomes,LoadingSpeed,Pars)
 			Anchored = false;
 			Parent = Planet;
 		});
+		task.wait()
 		local Mesh = game.ReplicatedStorage.Assets.BallMesh:Clone();
 		SetProperties(Mesh, {
-			Scale = Vector3.new(1, 1, 1) * Pars.Sea.Radius * 2;
+			Scale = Vector3.new(1, 1, 1) * Pars.Gen.Deform * Pars.Sea.Radius * 2;
 			Parent = Water;
 		});
+		task.wait()
 		local Weld = Instance.new("WeldConstraint")
 		SetProperties(Weld, {
 			Part0 = Planet.PrimaryPart;
@@ -233,45 +243,33 @@ function GenerationDone(Planet,Biomes,LoadingSpeed,Pars)
 			Name = "SeaWeld"
 		});
 	end
-	--welding (now "silent". My fps won't drop again just because of this)
-	if Pars.Gen.Weld then
-		local i = 0
-		if Pars.PrintStatus then print("Started welding") end
-		local function repeatWeld()
-			for i, Part in pairs(Planet:GetChildren()) do
-				if not Part:IsA("WedgePart") or Part:FindFirstChildOfClass("WeldConstraint") then continue end
-				local Weld = Instance.new("WeldConstraint");
-				Part.Anchored = false;
-				SetProperties(Weld, {
-					Part0 = Planet.PrimaryPart;
-					Part1 = Part;
-					Parent = Planet.PrimaryPart;
-				});
-				task.wait()
-			end
-		end
-		for i=1,Pars.Gen.Coroutines do--Coroutines do the work!
-			coroutine.wrap(repeatWeld)()
-		end
-		local maxweld = 0
+	--welding
+	local wtype = Pars.Gen.WeldingType
+	if wtype > 0 then
+		local parts = {}
 		for i, v in pairs(Planet:GetChildren()) do
-			if v:IsA("WedgePart") then maxweld += 1 end
+			if v:IsA("WedgePart") then table.insert(parts, v) end
 		end
-		repeat
-			task.wait(0.5)
-			local welded = 0
-			for i, v in pairs(Planet.PrimaryPart:GetChildren()) do
-				if v:IsA("WeldConstraint") then welded += 1 end
-			end
-			if Pars.PrintStatus then print("Welded: "..welded.."/"..maxweld) end
-		until welded >= maxweld
-		if Pars.PrintStatus then print("Completed welding") end
+		if wtype == 1 then
+			WeldingM.RandomWeld(parts, core, 100, Pars.PrintStatus)
+		elseif wtype == 2 then
+			WeldingM.PartsWeld(parts, core, 100, LoadingSpeed, Pars.PrintStatus)
+		end
+	else
+		for i, v: WedgePart in pairs(Planet:GetChildren()) do
+			if not v:IsA("WedgePart") then continue end
+			v.Transparency = 0
+			v.CanCollide = true
+		end
 	end
+	
 	Planet:PivotTo(CFrame.new(Pars.Gen.Position))
+	
+	if Pars.PrintStatus then print("Completed") end
 	--And done!
 end;
 
-function Awake(Planet,Pars,LoadingSpeed,Biomes)
+function Awake(Planet,Pars,Biomes)
 	--Importing variables from Parameters
 	
 	local res, rad = Pars.Gen.Resolution, Pars.Gen.Radius
@@ -282,7 +280,6 @@ function Awake(Planet,Pars,LoadingSpeed,Biomes)
 	
 	local Triangles = {};
 	
-	--From Kris: No clue how this works
 	for Index, Tris in pairs(TriSet) do
 		local Corners = {1};
 
@@ -295,7 +292,6 @@ function Awake(Planet,Pars,LoadingSpeed,Biomes)
 		table.insert(Triangles, Corners);
 	end;
 	
-	--From Kris: No clue how this works but I needed it for another module anyway
 	local GetLatitudeAndLongitude = function(Center, Point)
 		local dir = (Point-Center).Unit;
 		local up = Vector3.new(0,1,0);
@@ -308,26 +304,26 @@ function Awake(Planet,Pars,LoadingSpeed,Biomes)
 	end;
 
 	local Centre = GetCentre();
-	local Subdivide =  function(Amount, IsSmooth) --| IsSmooth pushes all points to an equal radius around the core
-		--From Kris: No clue how this works
+	local function Subdivide(Amount, IsSmooth)
+		local deform = Pars.Gen.Deform
 		for i = 1, Amount do
-			local Corners = {};
 			local NewTriangles = {};
-			for Index, Tris in pairs(Triangles) do
-				for Index, Vertice in pairs(Tris) do
+			for Index, Triangle in pairs(Triangles) do
+				local Corners = {};
+				for Index, Vertice in pairs(Triangle) do
 					Corners[Index] = Vertice;
 				end;
 
 				--| Replace triangle by 4 triangles
-				local A = GetMedian(Corners[1], Corners[2]);
-				local B = GetMedian(Corners[2], Corners[3]);
-				local C = GetMedian(Corners[3], Corners[1]);
-
-				if (IsSmooth) then 
-					A = (A - Centre).Unit * (rad); 
-					B = (B - Centre).Unit * (rad); 
-					C = (C - Centre).Unit * (rad);
-				end;
+				local A: Vector3 = GetMedian(Corners[1], Corners[2]);
+				local B: Vector3 = GetMedian(Corners[2], Corners[3]);
+				local C: Vector3 = GetMedian(Corners[3], Corners[1]);
+				
+				if IsSmooth then
+					A = (A-Centre).Unit*rad
+					B = (B-Centre).Unit*rad
+					C = (C-Centre).Unit*rad
+				end
 
 				table.insert(NewTriangles, {Corners[1]; A, C;});
 				table.insert(NewTriangles, {Corners[2]; B, A;});
@@ -341,44 +337,77 @@ function Awake(Planet,Pars,LoadingSpeed,Biomes)
 			if Pars.PrintStatus then print("Subdivide: "..i) end
 		end;
 	end;
+	
 	Subdivide(res, issmooth);
 	
 	--Applying noise
-	
+	local deform = Pars.Gen.Deform
 	for Index, Tris in pairs(Triangles) do
 		for Index, Vertice in pairs(Tris) do
+			local unit = (Vertice - Centre).Unit
+			Tris[Index] = unit*deform*rad
+			local Vertice = Tris[Index]
 			local LatitudeAndLongitude = GetLatitudeAndLongitude(GetCentre(), Vertice) / ndiv;
 			local ns = ThreeDNoise.new({LatitudeAndLongitude.X; LatitudeAndLongitude.Y;Pars.Noise.Seed}, ampl, octs, pers);
 			local Dir = (Vertice - GetCentre());
-			if ((Vertice - GetCentre()).Magnitude / (10000 * (Pars.Gen.Radius / 5000)) >= 0.5) then
-				--P. s. I use "10000 * (rad / constrad)" because @Fenix's script was made with a set radius
+			--[[if getns(Vertice, rad, deform) >= mountfrom then
 				Vertice += Vector3.new(0, Vertice.Y * 0.10 * mountmod, 0);
-			end;
+			end;]]
 			if ns > mountfrom then ns *= mountmod end
+			--local ns = 0
 			Tris[Index] = Vertice + (Dir * (ns * 0.10));
 		end;
-		if Index % LoadingSpeed == 0 then task.wait()
+		if Index % 2500 == 0 then task.wait()
 			if Pars.PrintStatus then print("Generating: "..Index.."/"..#Triangles) end
 		end
 	end;
-	
-	-- Drawing triangles (no clue how this works too lol)
-	
-	for i, Triangle in pairs(Triangles) do
-		Draw3DTriangle(Triangle[1], Triangle[2], Triangle[3], Planet);
-		if i % (math.round(1000 * (20480/#Triangles))) == 0 then task.wait()
-			if Pars.PrintStatus then print("Pasting: "..i.."/"..#Triangles) end
+	local LoadingSpeed = Pars.Gen.LoadingSpeed
+	local completed = 0
+	local function pastpart(imin, imax)
+		for i=imin, imax do
+			local Triangle = Triangles[i]
+			local w1, w2 = Draw3DTriangle(Triangle[1], Triangle[2], Triangle[3], Planet);
+			completed += 1
+			if i % math.round(LoadingSpeed / 4) == 0 then task.wait() end
+		end;
+	end
+	local partcount: number = Pars.Gen.TerrainCoroutines
+	local part = math.ceil(#Triangles/partcount)
+	for i=1, partcount do
+		if i == partcount then
+			coroutine.wrap(pastpart)(part*(i-1) + 1, #Triangles)
+		else
+			coroutine.wrap(pastpart)(part*(i-1) + 1, part*i)
 		end
-	end;
-	
+	end
+	repeat
+		task.wait()
+		if Pars.PrintStatus then print("Pasting: "..completed.."/"..#Triangles) end
+	until completed == #Triangles
 	GenerationDone(Planet,Biomes,LoadingSpeed,Pars);
 end;
 
-function module.GenerateSpaceObject(Name:string,Pars:{},Biomes:{},LoadingSpeed:number,Parent:Instance)
+function module.GenerateSpaceObject(Name:string,Pars:{},Biomes:{},Parent:Instance)
 	local obj = Instance.new("Model")
 	obj.Name = Name
 	obj.Parent = Parent
-	Awake(obj,Pars,LoadingSpeed,Biomes)
+	local noise, sea, gen = Pars.Noise, Pars.Sea, Pars.Gen
+	noise.Amplitude = autofill(noise.Amplitude, 5) :: number
+	noise.Persistence = autofill(noise.Persistence, 0.5) :: number
+	noise.Octaves = autofill(noise.Octaves, 10) :: number
+	noise.MountainsMod = autofill(noise.MountainsMod, 1) :: number
+	noise.MountainsFrom = autofill(noise.MountainsFrom, 0) :: number
+	noise.NoiseDivider = autofill(noise.NoiseDivider, 5) :: number
+	noise.Seed = autofill(noise.Seed, 0.148) :: number
+	sea.Material = autofill(sea.Material, Enum.Material.SmoothPlastic) :: Enum.Material
+	sea.Transparency = autofill(sea.Transparency, 0.68) :: number
+	gen.WeldingType = autofill(gen.WeldingType, 0) :: boolean
+	gen.IsSmoothSubdivide = autofill(gen.IsSmoothSubdivide, true) :: boolean
+	gen.IsAnchored = autofill(gen.IsAnchored, true) :: boolean
+	gen.TerrainCoroutines = autofill(gen.TerrainCoroutines, 4) :: number
+	gen.LoadingSpeed = autofill(gen.LoadingSpeed, 800) :: number
+	Pars.PrintStatus = autofill(Pars.PrintStatus, false) :: boolean
+	Awake(obj,Pars,Biomes)
 end
 
 return module
